@@ -347,8 +347,8 @@ const stlFiles = [
   'data/3D-print_Fundament.stl',
   'data/3D-print_Sarg.stl',
   'data/3D-print_Tak.stl',
-  'data/3D-print_Väggar 1.stl',
-  'data/3D-print_Väggar 2.stl'
+  'data/3D-print_V%C3%A4ggar%201.stl',
+  'data/3D-print_V%C3%A4ggar%202.stl'
 ];
 
 // Grayscale noise textures for bump/roughness only — color stays pure from material.color
@@ -466,8 +466,9 @@ const materials = {
 };
 
 function getMaterial(filename) {
+  const decoded = decodeURIComponent(filename);
   for (const [key, mat] of Object.entries(materials)) {
-    if (filename.includes(key)) return mat;
+    if (decoded.includes(key)) return mat;
   }
   return new THREE.MeshStandardMaterial({ color: 0xcccccc });
 }

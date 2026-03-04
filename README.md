@@ -2,7 +2,7 @@
 
 A first-person 3D viewer for exploring an architectural model of a guest house (gästhus). Built with Three.js, it loads STL files and renders them in a walkable environment with realistic lighting and materials.
 
-**Live demo:** [https://marju212.github.io/3dviewer/](https://marju212.github.io/3dviewer/)
+**Live demo:** [https://marju212.github.io/gaststuga/](https://marju212.github.io/gaststuga/)
 
 ## Features
 

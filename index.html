@@ -305,7 +305,8 @@ document.addEventListener('keyup', (e) => {
 });
 
 // ── Collision Detection ──────────────────────────────────────
-const collisionObjects = [];
+const collisionObjects = []; // Walls/roof — used for horizontal collision (have door openings)
+const groundObjects = [];    // Foundation + ground — used for vertical ground detection only
 const raycaster = new THREE.Raycaster();
 const COLLISION_MARGIN = 0.5; // Buffer distance from walls
 
@@ -365,7 +366,7 @@ function checkMoveDirection(pos, moveDir, moveDist) {
 function checkGround(position) {
   raycaster.set(position, new THREE.Vector3(0, -1, 0));
   raycaster.far = PLAYER_HEIGHT + 1;
-  const hits = raycaster.intersectObjects([ground, ...collisionObjects], true);
+  const hits = raycaster.intersectObjects([ground, ...groundObjects, ...collisionObjects], true);
   if (hits.length > 0) {
     return { grounded: true, height: hits[0].point.y + PLAYER_HEIGHT };
   }
@@ -554,6 +555,7 @@ async function loadAllModels() {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.userData.url = url;
     meshes.push(mesh);
     combinedBox.expandByObject(mesh);
   }
@@ -573,7 +575,13 @@ async function loadAllModels() {
     mesh.position.set(-center.x * scale, -combinedBox.min.y * scale, -center.z * scale);
     mesh.scale.set(scale, scale, scale);
     modelGroup.add(mesh);
-    collisionObjects.push(mesh);
+    // Foundation only used for ground detection (no door opening in it),
+    // all other parts used for wall collision (they have door/window openings)
+    if (mesh.userData.url.includes('Fundament')) {
+      groundObjects.push(mesh);
+    } else {
+      collisionObjects.push(mesh);
+    }
   }
 
   // Reposition so the bottom sits exactly on y=0 (ground)

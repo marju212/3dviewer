@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D World Viewer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
+    canvas { display: block; }
+
+    #blocker {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 100;
+    }
+
+    #instructions {
+      color: #fff;
+      text-align: center;
+      max-width: 500px;
+      padding: 40px;
+      background: rgba(20, 20, 30, 0.9);
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    #instructions:hover { transform: scale(1.02); }
+    #instructions h1 { font-size: 2em; margin-bottom: 16px; }
+    #instructions p { font-size: 1.1em; line-height: 1.6; color: #bbb; }
+    #instructions .keys {
+      display: inline-flex; gap: 6px; margin: 16px 0;
+    }
+    #instructions .key {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 1em;
+      font-weight: bold;
+      color: #fff;
+    }
+
+    #crosshair {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 20px; height: 20px;
+      z-index: 50;
+      pointer-events: none;
+      display: none;
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(255, 255, 255, 0.6);
+    }
+    #crosshair::before {
+      width: 2px; height: 20px;
+      top: 0; left: 9px;
+    }
+    #crosshair::after {
+      width: 20px; height: 2px;
+      top: 9px; left: 0;
+    }
+
+    #hud {
+      position: fixed; bottom: 20px; left: 20px;
+      color: rgba(255,255,255,0.5);
+      font-size: 12px;
+      z-index: 50;
+      pointer-events: none;
+      display: none;
+    }
+
+    #loading {
+      position: fixed; inset: 0;
+      background: #0a0a14;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column;
+      z-index: 200;
+      color: #fff;
+    }
+    #loading h2 { margin-bottom: 20px; }
+    #progress-bar {
+      width: 300px; height: 6px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    #progress-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #4a9eff, #7c4dff);
+      border-radius: 3px;
+      transition: width 0.3s;
+    }
+    #progress-text {
+      margin-top: 10px;
+      color: #888;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="loading">
+  <h2>Loading 3D World...</h2>
+  <div id="progress-bar"><div id="progress-fill"></div></div>
+  <div id="progress-text">Initializing...</div>
+</div>
+
+<div id="blocker" style="display:none;">
+  <div id="instructions">
+    <h1>3D World Viewer</h1>
+    <p>Click to enter the 3D world</p>
+    <div class="keys">
+      <span class="key">W</span>
+      <span class="key">A</span>
+      <span class="key">S</span>
+      <span class="key">D</span>
+    </div>
+    <p>Move with WASD / Arrow keys<br>
+       Mouse to look around<br>
+       SPACE to jump &bull; SHIFT to run<br>
+       ESC to release cursor</p>
+  </div>
+</div>
+
+<div id="crosshair"></div>
+<div id="hud"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+// ── Scene setup ──────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.FogExp2(0x87ceeb, 0.002);
+
+const FOV = 65; // Field of view in degrees — adjust between 60 (zoomed in) and 100 (wide angle)
+const camera = new THREE.PerspectiveCamera(FOV, window.innerWidth / window.innerHeight, 0.1, 2000);
+camera.position.set(0, 4.5, 0); // Eye height
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+document.body.appendChild(renderer.domElement);
+
+// ── Lighting ─────────────────────────────────────────────────
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+scene.add(ambientLight);
+
+const sunLight = new THREE.DirectionalLight(0xfff5e6, 2.0);
+sunLight.position.set(30, 80, 40);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(4096, 4096);
+sunLight.shadow.camera.left = -60;
+sunLight.shadow.camera.right = 60;
+sunLight.shadow.camera.top = 60;
+sunLight.shadow.camera.bottom = -60;
+sunLight.shadow.camera.near = 0.5;
+sunLight.shadow.camera.far = 200;
+sunLight.shadow.bias = -0.0005;
+sunLight.shadow.normalBias = 0.02;
+sunLight.shadow.radius = 3;
+scene.add(sunLight);
+
+// Secondary fill light for softer shadows on opposite side
+const fillLight = new THREE.DirectionalLight(0x8ecae6, 0.4);
+fillLight.position.set(-30, 40, -20);
+scene.add(fillLight);
+
+const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x556633, 0.5);
+scene.add(hemiLight);
+
+// ── Ground ───────────────────────────────────────────────────
+const groundGeo = new THREE.PlaneGeometry(500, 500);
+const groundMat = new THREE.MeshStandardMaterial({
+  color: 0x4a7c3f,
+  roughness: 0.9,
+  metalness: 0.0
+});
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Grid helper for orientation
+const grid = new THREE.GridHelper(500, 100, 0x3a6a2f, 0x3a6a2f);
+grid.position.y = 0.01;
+grid.material.opacity = 0.15;
+grid.material.transparent = true;
+scene.add(grid);
+
+// ── Sky ──────────────────────────────────────────────────────
+function createSky() {
+  const skyGeo = new THREE.SphereGeometry(900, 32, 32);
+  const skyMat = new THREE.ShaderMaterial({
+    uniforms: {
+      topColor: { value: new THREE.Color(0x0055aa) },
+      bottomColor: { value: new THREE.Color(0x87ceeb) },
+      offset: { value: 20 },
+      exponent: { value: 0.4 }
+    },
+    vertexShader: `
+      varying vec3 vWorldPosition;
+      void main() {
+        vec4 worldPos = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = worldPos.xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 topColor;
+      uniform vec3 bottomColor;
+      uniform float offset;
+      uniform float exponent;
+      varying vec3 vWorldPosition;
+      void main() {
+        float h = normalize(vWorldPosition + offset).y;
+        gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+      }
+    `,
+    side: THREE.BackSide
+  });
+  scene.add(new THREE.Mesh(skyGeo, skyMat));
+}
+createSky();
+
+// ── Controls ─────────────────────────────────────────────────
+const controls = new PointerLockControls(camera, document.body);
+
+const blocker = document.getElementById('blocker');
+const instructions = document.getElementById('instructions');
+const crosshair = document.getElementById('crosshair');
+const hud = document.getElementById('hud');
+
+instructions.addEventListener('click', () => controls.lock());
+
+controls.addEventListener('lock', () => {
+  blocker.style.display = 'none';
+  crosshair.style.display = 'block';
+  hud.style.display = 'block';
+});
+
+controls.addEventListener('unlock', () => {
+  blocker.style.display = 'flex';
+  crosshair.style.display = 'none';
+  hud.style.display = 'none';
+});
+
+scene.add(controls.getObject());
+
+// ── Movement ─────────────────────────────────────────────────
+const moveState = { forward: false, backward: false, left: false, right: false, jump: false, sprint: false };
+const velocity = new THREE.Vector3();
+const direction = new THREE.Vector3();
+const WALK_SPEED = 100;
+const SPRINT_SPEED = 200;
+const JUMP_FORCE = 20;
+const GRAVITY = 30;
+const PLAYER_HEIGHT = 7.2;
+const PLAYER_RADIUS = 0.3;
+let canJump = true;
+
+document.addEventListener('keydown', (e) => {
+  switch (e.code) {
+    case 'ArrowUp': case 'KeyW': moveState.forward = true; break;
+    case 'ArrowDown': case 'KeyS': moveState.backward = true; break;
+    case 'ArrowLeft': case 'KeyA': moveState.left = true; break;
+    case 'ArrowRight': case 'KeyD': moveState.right = true; break;
+    case 'Space': moveState.jump = true; break;
+    case 'ShiftLeft': case 'ShiftRight': moveState.sprint = true; break;
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  switch (e.code) {
+    case 'ArrowUp': case 'KeyW': moveState.forward = false; break;
+    case 'ArrowDown': case 'KeyS': moveState.backward = false; break;
+    case 'ArrowLeft': case 'KeyA': moveState.left = false; break;
+    case 'ArrowRight': case 'KeyD': moveState.right = false; break;
+    case 'Space': moveState.jump = false; break;
+    case 'ShiftLeft': case 'ShiftRight': moveState.sprint = false; break;
+  }
+});
+
+// ── Collision Detection ──────────────────────────────────────
+const collisionObjects = [];
+const raycaster = new THREE.Raycaster();
+const collisionDirections = [
+  new THREE.Vector3(1, 0, 0),
+  new THREE.Vector3(-1, 0, 0),
+  new THREE.Vector3(0, 0, 1),
+  new THREE.Vector3(0, 0, -1),
+  new THREE.Vector3(1, 0, 1).normalize(),
+  new THREE.Vector3(-1, 0, 1).normalize(),
+  new THREE.Vector3(1, 0, -1).normalize(),
+  new THREE.Vector3(-1, 0, -1).normalize(),
+];
+
+function checkCollision(position) {
+  const origin = position.clone();
+  origin.y = position.y - PLAYER_HEIGHT * 0.3; // Check from mid-body
+
+  for (const dir of collisionDirections) {
+    raycaster.set(origin, dir);
+    raycaster.far = PLAYER_RADIUS;
+    const hits = raycaster.intersectObjects(collisionObjects, true);
+    if (hits.length > 0) {
+      return { collided: true, direction: dir, distance: hits[0].distance };
+    }
+  }
+  return { collided: false };
+}
+
+function checkGround(position) {
+  raycaster.set(position, new THREE.Vector3(0, -1, 0));
+  raycaster.far = PLAYER_HEIGHT + 1;
+  const hits = raycaster.intersectObjects([ground, ...collisionObjects], true);
+  if (hits.length > 0) {
+    return { grounded: true, height: hits[0].point.y + PLAYER_HEIGHT };
+  }
+  return { grounded: false, height: PLAYER_HEIGHT };
+}
+
+// ── Load STL Files ───────────────────────────────────────────
+const stlFiles = [
+  'data/3D-print_Fundament.stl',
+  'data/3D-print_Sarg.stl',
+  'data/3D-print_Tak.stl',
+  'data/3D-print_Väggar 1.stl',
+  'data/3D-print_Väggar 2.stl'
+];
+
+// Grayscale noise textures for bump/roughness only — color stays pure from material.color
+function createNoiseBump(w, h, density, spotSize) {
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#808080'; // neutral gray = no bump
+  ctx.fillRect(0, 0, w, h);
+  for (let i = 0; i < density; i++) {
+    const x = Math.random() * w;
+    const y = Math.random() * h;
+    const gray = Math.floor(100 + Math.random() * 56); // 100-155 range around 128
+    ctx.fillStyle = `rgb(${gray},${gray},${gray})`;
+    const s = 1 + Math.random() * spotSize;
+    ctx.fillRect(x, y, s, s);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+function createWoodBump(w, h) {
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#808080';
+  ctx.fillRect(0, 0, w, h);
+  // Grain lines
+  for (let y = 0; y < h; y += 2) {
+    const gray = Math.floor(118 + Math.random() * 20);
+    const offset = Math.sin(y * 0.05) * 8;
+    ctx.strokeStyle = `rgb(${gray},${gray},${gray})`;
+    ctx.beginPath();
+    ctx.moveTo(offset, y);
+    ctx.lineTo(w + offset, y);
+    ctx.stroke();
+  }
+  // Knots
+  for (let i = 0; i < 4; i++) {
+    const kx = Math.random() * w;
+    const ky = Math.random() * h;
+    ctx.fillStyle = 'rgb(105,105,105)';
+    ctx.beginPath();
+    ctx.ellipse(kx, ky, 6 + Math.random() * 8, 3 + Math.random() * 5, Math.random() * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+function createRoughnessTex(w, h, base, variance) {
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const baseGray = Math.floor(base * 255);
+  ctx.fillStyle = `rgb(${baseGray},${baseGray},${baseGray})`;
+  ctx.fillRect(0, 0, w, h);
+  const range = Math.floor(variance * 255);
+  for (let i = 0; i < 6000; i++) {
+    const x = Math.random() * w;
+    const y = Math.random() * h;
+    const g = Math.max(0, Math.min(255, baseGray + Math.floor((Math.random() - 0.5) * range)));
+    ctx.fillStyle = `rgb(${g},${g},${g})`;
+    ctx.fillRect(x, y, 1 + Math.random() * 3, 1 + Math.random() * 3);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+const concreteBump = createNoiseBump(512, 512, 15000, 4);
+concreteBump.repeat.set(4, 4);
+const concreteRough = createRoughnessTex(512, 512, 0.85, 0.15);
+concreteRough.repeat.set(4, 4);
+
+const woodBump = createWoodBump(512, 512);
+woodBump.repeat.set(3, 3);
+const woodRough = createRoughnessTex(512, 512, 0.65, 0.2);
+woodRough.repeat.set(3, 3);
+
+const plasterBump = createNoiseBump(512, 512, 10000, 2);
+plasterBump.repeat.set(3, 3);
+const plasterRough = createRoughnessTex(512, 512, 0.9, 0.1);
+plasterRough.repeat.set(3, 3);
+
+const materials = {
+  'Fundament': new THREE.MeshStandardMaterial({
+    color: 0x5c5046, metalness: 0.1,
+    bumpMap: concreteBump, bumpScale: 0.4,
+    roughnessMap: concreteRough
+  }),
+  'Sarg': new THREE.MeshStandardMaterial({
+    color: 0xf5f0e8, metalness: 0.0,
+    bumpMap: plasterBump, bumpScale: 0.2,
+    roughnessMap: plasterRough
+  }),
+  'Tak': new THREE.MeshStandardMaterial({
+    color: 0x5c5046, metalness: 0.1,
+    side: THREE.DoubleSide,
+    bumpMap: woodBump, bumpScale: 0.35,
+    roughnessMap: woodRough
+  }),
+  'Väggar 1': new THREE.MeshStandardMaterial({
+    color: 0xf5f0e8, metalness: 0.0,
+    bumpMap: plasterBump, bumpScale: 0.2,
+    roughnessMap: plasterRough
+  }),
+  'Väggar 2': new THREE.MeshStandardMaterial({
+    color: 0xf5f0e8, metalness: 0.0,
+    bumpMap: plasterBump, bumpScale: 0.2,
+    roughnessMap: plasterRough
+  }),
+};
+
+function getMaterial(filename) {
+  for (const [key, mat] of Object.entries(materials)) {
+    if (filename.includes(key)) return mat;
+  }
+  return new THREE.MeshStandardMaterial({ color: 0xcccccc });
+}
+
+const loader = new STLLoader();
+const progressFill = document.getElementById('progress-fill');
+const progressText = document.getElementById('progress-text');
+const loadingScreen = document.getElementById('loading');
+const modelGroup = new THREE.Group();
+scene.add(modelGroup);
+
+let loaded = 0;
+
+function loadSTL(url) {
+  return new Promise((resolve, reject) => {
+    loader.load(
+      url,
+      (geometry) => {
+        loaded++;
+        const pct = (loaded / stlFiles.length) * 100;
+        progressFill.style.width = pct + '%';
+        progressText.textContent = `Loaded ${loaded}/${stlFiles.length}: ${decodeURIComponent(url.split('/').pop())}`;
+        resolve({ geometry, url });
+      },
+      undefined,
+      reject
+    );
+  });
+}
+
+async function loadAllModels() {
+  const results = await Promise.all(stlFiles.map(f => loadSTL(f)));
+
+  // First pass: compute combined bounding box to find scale
+  const combinedBox = new THREE.Box3();
+  const meshes = [];
+
+  for (const { geometry, url } of results) {
+    // Swap Y and Z axes: STL uses Z-up, Three.js uses Y-up
+    const posAttr = geometry.getAttribute('position');
+    for (let i = 0; i < posAttr.count; i++) {
+      const y = posAttr.getY(i);
+      const z = posAttr.getZ(i);
+      posAttr.setY(i, z);
+      posAttr.setZ(i, -y);
+    }
+    posAttr.needsUpdate = true;
+    // Recompute normals after flipping
+    geometry.computeVertexNormals();
+    geometry.computeBoundingBox();
+
+    const material = getMaterial(url);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    meshes.push(mesh);
+    combinedBox.expandByObject(mesh);
+  }
+
+  // Scale model so it's walkable (target ~20m wide)
+  const size = new THREE.Vector3();
+  combinedBox.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const targetSize = 30;
+  const scale = targetSize / maxDim;
+
+  // Center offset
+  const center = new THREE.Vector3();
+  combinedBox.getCenter(center);
+
+  for (const mesh of meshes) {
+    mesh.position.set(-center.x * scale, -combinedBox.min.y * scale, -center.z * scale);
+    mesh.scale.set(scale, scale, scale);
+    modelGroup.add(mesh);
+    collisionObjects.push(mesh);
+  }
+
+  // Reposition so the bottom sits exactly on y=0 (ground)
+  const flippedBox = new THREE.Box3().setFromObject(modelGroup);
+  modelGroup.position.y -= flippedBox.min.y;
+
+  // Recompute after repositioning
+  const groundedBox = new THREE.Box3().setFromObject(modelGroup);
+  const finalSize = new THREE.Vector3();
+  groundedBox.getSize(finalSize);
+  const finalCenter = new THREE.Vector3();
+  groundedBox.getCenter(finalCenter);
+
+  // Interior light below the roof
+  const interiorLight = new THREE.PointLight(0xffe8c0, 2, 30, 1);
+  interiorLight.position.set(finalCenter.x, groundedBox.max.y * 0.75, finalCenter.z);
+  interiorLight.castShadow = true;
+  interiorLight.shadow.mapSize.set(1024, 1024);
+  scene.add(interiorLight);
+
+  // Small visible bulb sphere
+  const bulbGeo = new THREE.SphereGeometry(0.15, 16, 16);
+  const bulbMat = new THREE.MeshBasicMaterial({ color: 0xffe8c0 });
+  const bulb = new THREE.Mesh(bulbGeo, bulbMat);
+  bulb.position.copy(interiorLight.position);
+  scene.add(bulb);
+
+  // Position camera at ground level in front of the model
+  camera.position.set(finalCenter.x, PLAYER_HEIGHT, groundedBox.max.z + 5);
+
+  progressText.textContent = 'Ready!';
+  progressFill.style.width = '100%';
+
+  setTimeout(() => {
+    loadingScreen.style.display = 'none';
+    blocker.style.display = 'flex';
+  }, 500);
+}
+
+loadAllModels().catch(err => {
+  console.error('Error loading STL files:', err);
+  progressText.textContent = 'Error loading models. Check console.';
+});
+
+// ── Animation Loop ───────────────────────────────────────────
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const delta = Math.min(clock.getDelta(), 0.1);
+
+  if (controls.isLocked) {
+    const speed = moveState.sprint ? SPRINT_SPEED : WALK_SPEED;
+
+    // Friction / damping
+    velocity.x -= velocity.x * 10.0 * delta;
+    velocity.z -= velocity.z * 10.0 * delta;
+
+    // Gravity
+    velocity.y -= GRAVITY * delta;
+
+    // Movement direction
+    direction.z = Number(moveState.forward) - Number(moveState.backward);
+    direction.x = Number(moveState.right) - Number(moveState.left);
+    direction.normalize();
+
+    if (moveState.forward || moveState.backward) velocity.z -= direction.z * speed * delta;
+    if (moveState.left || moveState.right) velocity.x -= direction.x * speed * delta;
+
+    // Jump
+    if (moveState.jump && canJump) {
+      velocity.y = JUMP_FORCE;
+      canJump = false;
+    }
+
+    // Apply movement with collision
+    const camPos = controls.getObject().position;
+
+    // Try moving
+    const newPos = camPos.clone();
+    controls.moveRight(-velocity.x * delta);
+    controls.moveForward(-velocity.z * delta);
+
+    // Horizontal collision check
+    const collision = checkCollision(controls.getObject().position);
+    if (collision.collided) {
+      // Push back
+      const pushBack = collision.direction.clone().multiplyScalar(PLAYER_RADIUS - collision.distance);
+      controls.getObject().position.sub(pushBack);
+    }
+
+    // Vertical movement
+    camPos.y += velocity.y * delta;
+
+    // Ground check
+    const groundCheck = checkGround(camPos);
+    if (groundCheck.grounded && camPos.y <= groundCheck.height) {
+      camPos.y = groundCheck.height;
+      velocity.y = 0;
+      canJump = true;
+    }
+
+    // Don't fall below ground plane
+    if (camPos.y < PLAYER_HEIGHT) {
+      camPos.y = PLAYER_HEIGHT;
+      velocity.y = 0;
+      canJump = true;
+    }
+
+    // HUD
+    hud.textContent = `Position: ${camPos.x.toFixed(1)}, ${camPos.y.toFixed(1)}, ${camPos.z.toFixed(1)}`;
+  }
+
+  renderer.render(scene, camera);
+}
+
+animate();
+
+// ── Resize ───────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+
+</body>
+</html>
